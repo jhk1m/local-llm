@@ -140,3 +140,6 @@ Desktop.ini
 *.swp
 *.swo
 *.backup
+
+# Project files
+*_config.py
