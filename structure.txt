@@ -1,0 +1,61 @@
+Folder PATH listing for volume HDD4TB
+Volume serial number is 222C-06D3
+J:.
+|   alexa-fastapi.service
+|   alexa_fastapi.conf
+|   app.py
+|   app_config.py
+|   ollama_ngrok.py
+|   requirements.txt
+|   structure.txt
+|   
++---clients
+|       alexa.py
+|       sqlite.py
+|       __init__.py
+|       
++---models
+|       account_linking.py
+|       alexa.py
+|       base.py
+|       core.py
+|       email.py
+|       __init__.py
+|       
++---routes
+|       account_linking.py
+|       alexa.py
+|       auth.py
+|       core.py
+|       __init__.py
+|       
++---services
+|       alexa.py
+|       auth_token.py
+|       rate_limit.py
+|       serve.py
+|       smtp.py
+|       user.py
+|       __init__.py
+|       
+\---static
+    +---email_template
+    |       password_reset.html
+    |       registration.html
+    |       
+    +---images
+    |       ava_logo_crema.png
+    |       favicon.ico
+    |       favicon.png
+    |       
+    +---styles
+    |       styles.css
+    |       
+    \---templates
+            base.html
+            change_password.html
+            legal.html
+            login.html
+            password_reset.html
+            register.html
+            

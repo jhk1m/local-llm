@@ -1,0 +1,15 @@
+fastapi==0.95.2
+starlette==0.27.0
+pydantic==1.10.13
+uvicorn[standard]
+jinja2
+ask-sdk
+boto3
+python-multipart>=0.0.6
+pydantic==1.10.13
+sqlalchemy>=1.4.49
+cryptography>=42.0.0
+python-jose[cryptography]>=3.3.0
+requests>=2.31.0
+slowapi>=0.1.7
+redis>=5.0.0

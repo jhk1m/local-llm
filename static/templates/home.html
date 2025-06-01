@@ -1,0 +1,28 @@
+{% set active_page = "home" %}
+
+{% extends "base.html" %}
+{% block content %}
+
+<div>
+  {% if user %}
+  Welcome to Oh Lama Farm! Add or change your integration configurations above.
+  {% if docs_url %}
+  <p>
+    <a href="{{ docs_url }}">Click here</a> to check out the API documentation.
+  </p>
+  {% endif %}
+  {% else %}
+  <p>
+    Welcome to Oh Lama Farm! To get started: log in or register.
+  </p>
+  {% endif %}
+  <p>
+    OneBlade Solutions brings you the future of digital integration. Oh Lama Farm transforms your regular Alexa-enabled devices into an
+    advanced conversational AI system powered by your local-llm, providing a <em>seamless</em> and <em>intelligent</em> user experience.
+  </p>
+  <p>
+    For more information, check us out on <a href="https://github.com/jhk1m/local-llm-alexa">GitHub</a>.
+  </p>
+</div>
+
+{% endblock %}

@@ -1,0 +1,29 @@
+{% set active_page = "alexa_link" %}
+
+{% extends "base.html" %}
+{% block content %}
+
+<div>
+  {% if user %}
+  <div class="row">
+    <p>
+      Your account is successfully linked to Alexa.
+    </p>
+    <p>
+      If you want to disconnect from Alexa, or you're having trouble with the skill, try removing the skill from Alexa App and <a href="https://www.amazon.com/dp/B0BR8KW2WL">re-enabling it</a>.
+      <br />
+      If you're seeing this page, but you still don't have access to Oh Lama Farm skill, make sure you granted the requested permissions in the Alexa App.
+    </p>
+    <button onclick="window.close()" class="btn btn-primary">Close Window</button>
+  </div>
+  {% else %}
+  <p>
+    Welcome to the Oh Lama Farm! To get started: log in or register.
+  </p>
+  {% endif %}
+  <p>
+    For more information, check us out on <a href="https://github.com/jhk1m/alexa-hosted-chatgpt">GitHub</a>.
+  </p>
+</div>
+
+{% endblock %}
