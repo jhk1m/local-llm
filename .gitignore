@@ -142,4 +142,4 @@ Desktop.ini
 *.backup
 
 # Project files
-*_config.py
+app_config.py
