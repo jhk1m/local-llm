@@ -85,6 +85,7 @@ class User(BaseModel):
 
     configuration: UserConfiguration = Field(default_factory=UserConfiguration)
     alexa_linking: AlexaLinkingInfo = Field(default_factory=AlexaLinkingInfo)
+    alexa_auth_code: str | None = None
 
     use_developer_routes: bool = False
 
@@ -94,6 +95,7 @@ class User(BaseModel):
     @property
     def is_linked_to_alexa(self):
         return bool(self.configuration.alexa and self.configuration.alexa.is_valid)
+
 
     def link_alexa_account(self, alexa_user_id: str):
         self.alexa_linking.alexa_user_id = alexa_user_id
@@ -140,8 +142,8 @@ class BaseSyncEvent(BaseModel):
     username: str
     source: Source
 
-    client_id: str = app_secrets.APP_CLIENT_ID
-    client_secret: str = app_secrets.APP_CLIENT_SECRET
+    client_id: str = app_secrets.ALEXA_CLIENT_ID
+    client_secret: str = app_secrets.ALEXA_CLIENT_SECRET
 
     event_id: str = Field(default_factory=lambda: str(uuid4()))
     timestamp: datetime = Field(default_factory=datetime.utcnow)
@@ -152,3 +154,9 @@ class BaseSyncEvent(BaseModel):
     @property
     def group_id(self):
         return self.username  # preserves order of events per-user
+    
+class OAuthTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+    refresh_token: str | None = None

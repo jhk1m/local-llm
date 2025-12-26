@@ -63,17 +63,19 @@ class UserService:
         if active_only and user.disabled:
             return None
         return user
+    
 
     def get_user_by_alexa_id(self, alexa_user_id: str) -> UserInDB | None:
-        results = self.db.query("alexa_linking.alexa_user_id", alexa_user_id)
+        """If you promote alexa_user_id to a top-level attr with a GSI, use this."""
+        results = self.db.query("alexa_user_id", alexa_user_id)
         if results:
             return UserInDB.parse_obj(results[0])
         return None
 
-    def link_alexa_account(self, alexa_user_id: str) -> None:
-        if not self.alexa_linking:
-            self.alexa_linking = {}
-        self.alexa_linking["alexa_user_id"] = alexa_user_id
+    def link_alexa_account(self, user: User, alexa_user_id: str) -> None:
+        """Links an Alexa User ID to a user object and saves it."""
+        user.link_alexa_account(alexa_user_id)
+        self.update_user(user)
 
     def delete_user(self, username: str) -> None:
         self.db.delete(username)
@@ -83,15 +85,8 @@ class UserService:
         return [str(data.get(config.settings.USERS_PK)) for data in user_data]
     
     def get_user_by_auth_code(self, auth_code: str) -> UserInDB | None:
-        """Retrieves a user by their Alexa authorization code."""
-        # This assumes alexa_linking.auth_code is indexed in DynamoDB
-        # You might need a GSI (Global Secondary Index) on 'alexa_linking.auth_code'
-        # if you are querying directly on a nested attribute.
-        # If not, you might need to scan (less efficient for large tables) or query by another index
-        # and then filter in application code.
-        
-        # Example if alexa_linking.auth_code is a top-level attribute or part of a GSI:
-        results = self.db.query("alexa_linking.auth_code", auth_code) # Adjust if your DynamoDB query needs a different path/index
+        """Retrieve a user by their Alexa authorization code (top-level attr, GSI-backed)."""
+        results = self.db.query("alexa_auth_code", auth_code)
         if results:
             return UserInDB.parse_obj(results[0])
         return None
@@ -146,11 +141,11 @@ class UserService:
             logging.error(f'Unexpected error in create_new_user: {str(e)}')
 
         if disabled:
-            new_user.set_expiration(config.settings.ACCESS_TOKEN_EXPIRE_MINUTES_REGISTRATION * 60)
+            new_user.set_expiration(config.settings.REGISTRATION_TOKEN_EXPIRE_MINUTES)
 
         if create_registration_token:
             access_token_expires = timedelta(
-                minutes=config.settings.ACCESS_TOKEN_EXPIRE_MINUTES_REGISTRATION
+                minutes=config.settings.REGISTRATION_TOKEN_EXPIRE_MINUTES
             )
             # Use injected token_service
             registration_token = token_service.create_token(new_user.username, access_token_expires)

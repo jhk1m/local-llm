@@ -1,82 +1,79 @@
+# In services/auth_token.py - FINAL version
+
 from __future__ import annotations
-
 import logging
-import string
-import secrets
 from datetime import datetime, timedelta
-
-from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
+import jwt
 from models.core import Token
-
 import config
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl='/oauth/authorization/token')
-
-
 class InvalidTokenError(Exception):
-    def __init__(self):
-        super().__init__('Invalid token')
-
+    pass
 
 class AuthTokenService:
-    def __init__(self):
-        self.sessions = {}
+    def _create_api_token(self, username: str, expires_delta: timedelta) -> Token:
+        """Helper to create a JWT for the Alexa API, including aud and iss."""
+        expire = datetime.utcnow() + expires_delta
+        to_encode = {
+            "sub": username, 
+            "exp": expire,
+            "aud": config.secrets.ALEXA_SKILL_ID,
+            "iss": config.secrets.ALEXA_SKILL_ID
+        }
+        encoded_jwt = jwt.encode(
+            to_encode, config.secrets.JWT_SECRET_KEY, algorithm=config.settings.JWT_ALGORITHM
+        )
+        return Token(access_token=encoded_jwt, token_type='Bearer')
+
+    def _create_website_session_token(self, username: str, expires_delta: timedelta) -> Token:
+        """Helper to create a simple JWT for the website session, WITHOUT aud or iss."""
+        expire = datetime.utcnow() + expires_delta
+        to_encode = {"sub": username, "exp": expire}
+        encoded_jwt = jwt.encode(
+            to_encode, config.secrets.JWT_SECRET_KEY, algorithm=config.settings.JWT_ALGORITHM
+        )
+        return Token(access_token=encoded_jwt, token_type='Bearer')
+
+    def create_token(self, username: str) -> Token:
+        """Creates a short-lived access token for the Alexa API."""
+        expires = timedelta(minutes=config.settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        return self._create_api_token(username, expires)
+
+    def create_refresh_token(self, username: str) -> Token:
+        """Creates a long-lived refresh token for the Alexa API."""
+        expires = timedelta(days=config.settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        return self._create_api_token(username, expires)
 
     def create_session(self, username: str) -> str:
-        session_token = secrets.token_urlsafe(32)
-        self.sessions[session_token] = {
-            "username": username,
-            "expires": datetime.utcnow() + timedelta(minutes=15)
-        }
-        return session_token
+        """Creates a short-lived session token for the WEBSITE."""
+        expires = timedelta(minutes=config.settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    def validate_session(self, session_token: str) -> bool:
-        session = self.sessions.get(session_token)
-        if not session or datetime.utcnow() > session["expires"]:
-            return False
-        return True
-    
-    def get_username_from_session(self, session_token: str) -> str | None:
-        session = self.sessions.get(session_token)
-        return session["username"] if session else None
+        return self._create_website_session_token(username, expires).access_token
 
-    def create_token(self, username: str, expires: timedelta | None = None) -> Token:
-        logger.debug('...............CREATE_TOKEN for: %s', username)
-        if not expires:
-            expires = timedelta(minutes=config.settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-
-        expiration = datetime.utcnow() + expires
-        data = {'sub': username, 'exp': expiration}
-        access_token = jwt.encode(data, config.secrets.DB_SECRET_KEY, algorithm=config.secrets.DB_ALGORITHM)
-
-        logger.debug('...............ACCESS_TOKEN CREATED: %s', access_token)
-        return Token(access_token=access_token, token_type='Bearer')
-
-    def get_username_from_token(self, access_token: str) -> str:
+    def get_username_from_token(self, token: str) -> str:
+        """Decodes any token (API or session) and returns the username."""
         try:
+            # This decode function does not check for audience, so it will work for both token types.
             payload = jwt.decode(
-                access_token,
-                config.secrets.DB_SECRET_KEY,
-                algorithms=[config.secrets.DB_ALGORITHM],
-                options={"verify_exp": True}
+                token,
+                config.secrets.JWT_SECRET_KEY,
+                algorithms=[config.settings.JWT_ALGORITHM],
             )
-            logger.debug('Decoded JWT payload: %s', payload)
-            username: str | None = payload.get('sub')
-            
-            if not username:
-                logger.error('Missing "sub" claim in token')
-                raise InvalidTokenError()
-                
+            username: str | None = payload.get("sub")
+            if username is None:
+                raise InvalidTokenError("Token missing username (sub) claim")
             return username
+        except jwt.PyJWTError as e:
+            logger.error(f"JWT Decode Error: {e}")
+            raise InvalidTokenError(str(e))
 
-        except JWTError as e:
-            logger.error('JWT decoding failed: %s', str(e))
-            raise InvalidTokenError()
-
-    def refresh_token(self, access_token: str, expires: timedelta | None = None) -> Token:
-        username = self.get_username_from_token(access_token)
-        return self.create_token(username, expires)
+    def validate_session(self, token: str) -> bool:
+        """Validates a session token."""
+        try:
+            self.get_username_from_token(token)
+            return True
+        except InvalidTokenError:
+            return False

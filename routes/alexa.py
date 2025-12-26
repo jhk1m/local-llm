@@ -1,226 +1,142 @@
 from __future__ import annotations
-
-import base64
-import hashlib
-import hmac
 import logging
-import boto3
-from datetime import timedelta
-from json import JSONDecodeError
 from typing import cast
-from typing import Optional
-from uuid import uuid4
-
-import requests
+from datetime import timedelta
+from app import services, templates
+from fastapi import Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
+from fastapi.responses import RedirectResponse, HTMLResponse
+from models.alexa import AlexaAuthRequest
+from models.core import OAuthTokenResponse, User
+from requests import PreparedRequest
+from routes.core import redirect_if_not_logged_in
 import config
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
-from fastapi.routing import APIRoute
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-from models.account_linking import UserAlexaConfiguration, UserAlexaConfigurationCreate
-from models.alexa import AlexaAuthRequest
-from models.core import RateLimitCategory, Token, User
-from pydantic import ValidationError
-from requests import PreparedRequest
+auth_router = APIRouter(prefix="/oauth/authorization", tags=["Alexa Account Linking"])
+frontend_router = APIRouter(prefix="/app/alexa", tags=["Alexa Frontend"])
 
-from .account_linking import unlink_alexa_account
-from .auth import get_current_user
-from .core import redirect_if_not_logged_in
-from app import services, templates
-
-# Initialize configuration and services
-
-kms_client = boto3.client('kms', region_name=config.secrets.AWS_REGION)
-
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Create routers
-router = APIRouter(prefix='/app', tags=['Application'])
-auth_router = APIRouter(prefix="/oauth/authorization", tags=["Alexa Account Linking"])
-frontend_router = APIRouter(prefix='/app/alexa', tags=['Alexa'])
 
-### Frontend ###
-
-def create_alexa_config_template(request: Request, user: User, **kwargs):
-    context = {
-        'request': request,
-        'user': user,
-    }
-
-    return templates.TemplateResponse(
-        'alexa_config.html',
-        {**context, **{k: v for k, v in kwargs.items() if k not in context}},
-    )
-
-@frontend_router.get('', response_class=HTMLResponse)
-async def configure_alexa(request: Request):
-    """Render the Alexa authorization page"""
-    logged_in_response = await redirect_if_not_logged_in(
-        request,
-        redirect_path=frontend_router.url_path_for('configure_alexa'),
-    )
-
+@frontend_router.get("/configure", response_class=HTMLResponse, name="configure_alexa")
+async def configure_alexa_page(request: Request):
+    """
+    Renders the page for managing the Alexa skill link.
+    """
+    logged_in_response = await redirect_if_not_logged_in(request)
     if isinstance(logged_in_response, Response):
-        return logged_in_response
+        return logged_in_response # Redirects to login if the user isn't authenticated
 
-    user = logged_in_response
-    return create_alexa_config_template(request, user)
+    user: User = logged_in_response
 
-@frontend_router.post('/unlink', response_class=HTMLResponse)
-async def delete_alexa_config(request: Request):
-    """Delete the user's Alexa authorization"""
-    logged_in_response = await redirect_if_not_logged_in(
-        request,
-        redirect_path=frontend_router.url_path_for('configure_alexa'),
-    )
+    # NOTE: You must have an 'alexa_config.html' file in your templates directory
+    # for this page to render correctly.
+    return templates.TemplateResponse("alexa_config.html", {"request": request, "user": user})
 
+
+@auth_router.get("/authorize", name="authorize")
+async def handle_alexa_authorization_request(request: Request, auth: AlexaAuthRequest = Depends()):
+    """
+    Step 1 of Alexa OAuth flow.
+    Receives the initial request from Amazon, validates it, and redirects
+    the user to our login page if they are not already authenticated.
+    If they are authenticated, it generates the auth code and redirects back to Amazon.
+    """
+    logger.debug(f"Alexa /authorize hit with state: {auth.state}")
+    logger.debug(f"CLIENT ID FROM YOUR CONFIG: '{config.secrets.ALEXA_CLIENT_ID}'")
+
+    # 1. Validate the incoming request from Amazon
+    if auth.client_id != config.secrets.ALEXA_CLIENT_ID:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid client_id")
+    if auth.response_type != "code":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported response_type")
+    if auth.redirect_uri not in config.secrets.ALEXA_REDIRECT_URI:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="redirect_uri not allowed")
+
+    # 2. Check if user is logged in.
+    logged_in_response = await redirect_if_not_logged_in(request)
     if isinstance(logged_in_response, Response):
-        return logged_in_response
+        # User is NOT logged in. Stash OAuth parameters and redirect.
+        request.session["oauth_state"] = auth.state
+        # ... (stash other params) ...
+        
+        # --- MODIFICATION ---
+        # Create a standard RedirectResponse object first
+        response = RedirectResponse(url=request.url_for('log_in'), status_code=status.HTTP_302_FOUND)
+        
+        # Add headers to prevent caching
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        
+        return response # Return the modified response
 
-    user = logged_in_response
+    # 3. User IS logged in.
+    user: User = logged_in_response
+    logger.debug(f"User {user.username} is logged in, generating auth code.")
 
-    try:
-        user = await unlink_alexa_account(user)
-        return create_alexa_config_template(
-            request,
-            user,
-            success_message='Successfully unlinked your Alexa account',
-        )
-    except Exception:
-        return create_alexa_config_template(
-            request,
-            user,
-            auth_error='Unknown error when trying to unlink your account',
-        )
-
-
-### Auth Handshake  **Web Authorization URI ###
-# /authorization/alexa
-
-@router.get("/authorize")
-async def authorize(
-    request: Request,
-    client_id: str,
-    response_type: str,
-    redirect_uri: str,
-    state: str,
-    alexa_service: AlexaService = Depends()
-):
-    # Log all incoming params for debugging.
-    logger.debug(
-        '.....................Received Alexa authorization request: %s', auth.dict(),
+    # Generate the short-lived authorization code
+    code = services.alexa.create_auth_code(
+        user, client_id=auth.client_id, redirect_uri=auth.redirect_uri
     )
 
-    """The authorization URI for Alexa account linking"""
-    logger.debug('...............RECEIVED CLIENT_ID: %s', auth.client_id)
-    if auth.client_id != config.secrets.APP_CLIENT_ID:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Invalid client_id',
-        )
-
-    logged_in_response = await redirect_if_not_logged_in(
-        request,
-        redirect_path=auth_router.url_path_for('authorize_alexa_app'),
-        params=auth.dict(),
-    )
-
-    if isinstance(logged_in_response, Response):
-        return logged_in_response
-
-    user = logged_in_response
-
-    access_token_expires = timedelta(
-        minutes=config.settings.ACCESS_TOKEN_EXPIRE_MINUTES_TEMPORARY,
-    )
-    user_access_token = services.token.create_token(
-        user.username, access_token_expires,
-    )
-    user.access_token = user_access_token.access_token
-    logger.debug('...............UPDATING USER: %s', user)
-    # Update user with specified fields
-    try:
-        services.user.update_user(user)
-        logger.debug(
-            '...............User ACCESS & API token and updated successfully',
-        )
-    except Exception as e:
-        logger.error(f'...............Error updating user: {e}')
-        # Handle the error appropriately
-
+    # 4. Redirect back to Amazon's `redirect_uri` with the code and state.
     req = PreparedRequest()
-    req.prepare_url(
-        auth.redirect_uri, {
-            'code': user_access_token.access_token, 'state': auth.state,
-        },
-    )
-    redirect_uri = cast(str, req.url)
-
-    # add params to redirect uri
-    # redirect_uri = f"{auth.redirect_uri}?state={auth.state}&code={user_access_token.access_token}"
-    # logger.debug("...............ACCESS TOKEN SENT TO ALEXA: %s", redirect_uri)
-
-    return RedirectResponse(redirect_uri, status_code=302)
+    req.prepare_url(auth.redirect_uri, {"code": code, "state": auth.state})
+    return RedirectResponse(cast(str, req.url), status_code=status.HTTP_302_FOUND)
 
 
-### Access token and token refresh request  **Access token URI ###
-# /authorization/alexa/token
-@auth_router.post('/token', response_model=Token)
-async def get_access_token(
+@auth_router.post('/token', response_model=OAuthTokenResponse)
+async def exchange_code_for_token(
+    request: Request,
     grant_type: str = Form(...),
     code: str | None = Form(None),
     refresh_token: str | None = Form(None),
     client_id: str = Form(...),
+    client_secret: str = Form(...),
     redirect_uri: str | None = Form(None),
-) -> Token:
-    """Process Alexa auth-request form and returns an access token"""
-    logger.debug(
-        '...............ACCESS TOKEN REQUESTED /authorization/alexa/token',
-    )
-    logger.debug('...............GRANT TYPE: %s', grant_type)
-    logger.debug('...............CODE: %s', code)
-    if client_id != config.secrets.APP_CLIENT_ID:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+) -> OAuthTokenResponse:
+    """
+    Step 2 of Alexa OAuth flow. Exchanges the authorization code for tokens
+    and performs full client authentication.
+    """
+    logger.debug(f"Token exchange request received for grant_type: {grant_type}")
+    form_data = await request.form()
+    logger.info("--- RAW TOKEN REQUEST FROM ALEXA ---")
+    logger.info(f"HEADERS: {dict(request.headers)}")
+    logger.info(f"FORM BODY: {form_data}")
+    logger.info("--- VALIDATING CLIENT SECRET ---")
+    logger.info(f"SECRET FROM ALEXA: '{client_secret}'")
+    logger.info(f"SECRET FROM YOUR CONFIG: '{config.secrets.ALEXA_CLIENT_SECRET}'")
+    logger.info("------------------------------")
+    logger.info("------------------------------------")
+
+    # --- Validate both client_id AND client_secret ---
+    if client_id != config.secrets.ALEXA_CLIENT_ID:
+        raise HTTPException(status_code=400, detail="Invalid client_id")
+    if client_secret != config.secrets.ALEXA_CLIENT_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid client_secret")
+
+    if grant_type == "authorization_code":
+        if not code or not redirect_uri:
+            raise HTTPException(status_code=400, detail="Missing code or redirect_uri")
+        
+        user = services.alexa.validate_auth_code(code, client_id, redirect_uri)
+        if not user:
+            raise HTTPException(status_code=400, detail="Invalid or expired authorization code")
+
+        # ... create and return tokens ...
+        access = services.token.create_token(user.username)
+        refresh = services.token.create_refresh_token(user.username)
+        return OAuthTokenResponse(
+            access_token=access.access_token,
+            token_type="Bearer",
+            expires_in=int(timedelta(minutes=config.settings.ACCESS_TOKEN_EXPIRE_MINUTES).total_seconds()),
+            refresh_token=refresh.access_token,
         )
 
-    access_token_expires = timedelta(
-        minutes=config.settings.ACCESS_TOKEN_EXPIRE_MINUTES_INTEGRATION,
-    )
-    return services.token.refresh_token(code, access_token_expires)
+    elif grant_type == "refresh_token":
+        
+        pass
 
-
-@frontend_router.delete('/link')
-async def unlink_user_from_alexa_app(request: Request, user_id: str = Query(..., alias='userId')):
-    secret_hash = request.headers.get(config.settings.ALEXA_SECRET_HEADER_KEY)
-    if not secret_hash:
-        logging.error('Alexa unlink request received without security hash')
-        raise HTTPException(status.HTTP_400_BAD_REQUEST)
-
-    hmac_signature = hmac.new(
-        key=config.secrets.APP_CLIENT_SECRET.encode('utf-8'),
-        msg=config.secrets.APP_CLIENT_ID.encode('utf-8'),
-        digestmod=hashlib.sha256,
-    )
-
-    calculated_hash = base64.b64encode(hmac_signature.digest()).decode()
-    if calculated_hash != secret_hash:
-        logging.error('Alexa unlink request received with invalid hash')
-        raise HTTPException(status.HTTP_400_BAD_REQUEST)
-
-    usernames = services.user.get_usernames_by_secondary_index(
-        'alexa_user_id', user_id,
-    )
-    if not usernames:
-        return
-
-    for username in usernames:
-        _user_in_db = services.user.get_user(username, active_only=False)
-        if not _user_in_db:
-            continue
-
-        user = _user_in_db.cast(User)
-        await unlink_alexa_account(user)
+    raise HTTPException(status_code=400, detail="Unsupported grant_type")

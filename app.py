@@ -53,11 +53,10 @@ from routes import account_linking, alexa, auth, core
 
 # Include routers
 app.include_router(core.router, include_in_schema=False)   # type: ignore
-app.include_router(alexa.frontend_router, include_in_schema=False)   # type: ignore
 app.include_router(alexa.auth_router, include_in_schema=False)  # type: ignore
 app.include_router(account_linking.api_router)   # type: ignore
 app.include_router(auth.router, include_in_schema=False)   # type: ignore
-
+app.include_router(alexa.frontend_router)
 
 for route in app.routes:
     logger.debug(f'...............ROUTE NAME: {route.name} PATH: {route.path}')

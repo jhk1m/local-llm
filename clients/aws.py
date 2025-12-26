@@ -64,6 +64,10 @@ class MissingPrimaryKeyError(ValueError):
 class DynamoDB:
     """Provides higher-level functions to interact with DynamoDB"""
 
+    GSI_NAME_BY_ATTR = {
+        "alexa_auth_code": "gsi_alexa_auth_code",
+    }
+
     def __init__(self, tablename: str, username: str) -> None:
         self.tablename = tablename
         self.pk = username
@@ -82,20 +86,21 @@ class DynamoDB:
 
     def query(self, index: str, value: str) -> list[dict[str, Any]]:
         """Queries by global secondary index and returns all items"""
+        if "." in index:
+            raise ValueError(f"Cannot query nested attribute '{index}'. Use a top-level GSI key.")
+        index_name = self.GSI_NAME_BY_ATTR.get(index, index)
 
-        key_condition_expression = f'{index} = :{index}'
-        expression_attribute_values = {f':{index}': {'S': value}}
+        key_condition_expression = f'{index} = :v'
+        expression_attribute_values = {':v': {'S': value}}
 
         data = _aws.ddb.query(
             TableName=self.tablename,
-            IndexName=index,
+            IndexName=index_name,
             KeyConditionExpression=key_condition_expression,
             ExpressionAttributeValues=expression_attribute_values,
         )
-
         if 'Items' not in data:
             return []
-
         return ddb_json.loads(data['Items'])
 
     def put(self, item: dict[str, Any], allow_update=True) -> None:

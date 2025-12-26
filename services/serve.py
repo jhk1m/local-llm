@@ -5,7 +5,7 @@ from .auth_token import AuthTokenService
 from .rate_limit import RateLimitService
 from .smtp import SMTPService
 from .user import UserService
-
+from .alexa import AlexaService
 
 class CreateServices:
     def __init__(self) -> None:
@@ -13,6 +13,7 @@ class CreateServices:
         self._smtp: SMTPService | None = None
         self._token: AuthTokenService | None = None
         self._user: UserService | None = None
+        self._alexa: AlexaService | None = None
 
     @property
     def rate_limit(self):
@@ -37,11 +38,18 @@ class CreateServices:
         if not self._user:
             self._user = UserService()
         return self._user
+    
+    @property
+    def alexa(self) -> AlexaService:
+        if not self._alexa:
+            self._alexa = AlexaService()
+        return self._alexa
 
     def reset(self):
         self._rate_limit = None
         self._smtp = None
         self._token = None
         self._user = None
+        self._alexa = None
 
 services = CreateServices()

@@ -26,13 +26,14 @@ class AlexaService:
         including client_id and redirect_uri for later validation.
         """
         code = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
+        user.set_alexa_auth_code(code, expires_in)
         
         # Store client_id and redirect_uri with the auth code
-        user.alexa_linking.auth_code = code
-        user.alexa_linking.auth_code_expires = int(time.time()) + expires_in
         user.alexa_linking.client_id = client_id # New: Store client_id
         user.alexa_linking.redirect_uri = redirect_uri # New: Store redirect_uri
-        
+        user.alexa_auth_code = code 
+
+        logger.debug(f"ATTEMPTING TO SAVE USER OBJECT: {user.dict()}")
         self.user_service.update_user(user) # Persist changes to user model
         logger.debug(f"Generated auth code '{code}' for user {user.username}. Expires in {expires_in}s. Client ID: {client_id}, Redirect URI: {redirect_uri}")
         return code
@@ -43,38 +44,23 @@ class AlexaService:
         and returns the associated user if valid.
         This function should also invalidate the code after use.
         """
-        # Find user by auth code (you'll need to query your DB or cache for the user associated with this code)
-        # This assumes your DynamoDB `User` model can be queried by `alexa_linking.auth_code`
-        user = self.user_service.get_user_by_auth_code(auth_code) # You'll need to implement this in UserService
-
-        if not user:
-            logger.error(f"Auth code '{auth_code}' not found or no user associated.")
+        user_in_db = self.user_service.get_user_by_auth_code(auth_code)  # NEW path
+        if not user_in_db:
+            logger.error("Auth code not found")
             return None
-
-        # Check if the code is valid (not expired, matches what's stored)
+        user = user_in_db.cast(User)
+        # check expiry and client/redirect, then invalidate:
         if not user.is_alexa_auth_code_valid(auth_code):
-            logger.error(f"Auth code '{auth_code}' for user {user.username} is invalid or expired.")
-            user.clear_alexa_auth_code() # Clear invalid/expired code
+            user.clear_alexa_auth_code()
             self.user_service.update_user(user)
             return None
-
-        # Validate client_id and redirect_uri against what was stored with the code
-        if user.alexa_linking.client_id != client_id:
-            logger.error(f"Auth code '{auth_code}' for user {user.username}: client_id mismatch. Expected '{user.alexa_linking.client_id}', got '{client_id}'.")
-            user.clear_alexa_auth_code() # Invalidate code on mismatch
+        if user.alexa_linking.client_id != client_id or user.alexa_linking.redirect_uri != redirect_uri:
+            user.clear_alexa_auth_code()
             self.user_service.update_user(user)
             return None
-        
-        if user.alexa_linking.redirect_uri != redirect_uri:
-            logger.error(f"Auth code '{auth_code}' for user {user.username}: redirect_uri mismatch. Expected '{user.alexa_linking.redirect_uri}', got '{redirect_uri}'.")
-            user.clear_alexa_auth_code() # Invalidate code on mismatch
-            self.user_service.update_user(user)
-            return None
-
-        # Important: Invalidate the auth code after successful validation (single-use)
+        user.alexa_auth_code = None
         user.clear_alexa_auth_code()
         self.user_service.update_user(user)
-        logger.debug(f"Auth code '{auth_code}' successfully validated and invalidated for user {user.username}.")
         return user
 
     # ... rest of your AlexaService methods ...

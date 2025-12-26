@@ -26,8 +26,8 @@ class AppSecrets(BaseSettings):
     SMTP_PASSWORD: str =
 
     ### Access ###
-    APP_CLIENT_ID: str =
-    APP_CLIENT_SECRET: str = 
+    ALEXA_CLIENT_ID: str =
+    ALEXA_CLIENT_SECRET: str = 
     EMAIL_WHITELIST: List[str] = 
 
     ### Alexa ###
@@ -36,7 +36,7 @@ class AppSecrets(BaseSettings):
     ALEXA_SKILL_ID: str = 
     ALEXA_REDIRECT_URI: list[str] = 
 
-    JWT_SECRET: str = 
+    JWT_SECRET_KEY: str = 
     ### Ollama ###
     OLLAMA_URL: str = 
     OLLAMA_MODEL: str = 
@@ -69,10 +69,10 @@ class AppSettings(BaseSettings):
     ### Token Expiry ###
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 30
     ACCESS_TOKEN_EXPIRE_MINUTES_TEMPORARY: int = 10
-    ACCESS_TOKEN_EXPIRE_MINUTES_LONG: int = 60 * 24 * 365 * 10
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 60 * 24 * 365 * 10
     ACCESS_TOKEN_EXPIRE_MINUTES_INTEGRATION: int = 60 * 24 * 365 * 100
     ACCESS_TOKEN_EXPIRE_MINUTES_REGISTRATION: int = 15
-    ACCESS_TOKEN_EXPIRE_MINUTES_RESET_PASSWORD: int = 15
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 15
 
     ### Login ###
     LOGIN_LOCKOUT_ATTEMPT: int = 5
