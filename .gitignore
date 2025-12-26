@@ -143,3 +143,6 @@ Desktop.ini
 
 # Project files
 app_config.py
+venv
+.venv
+.env
